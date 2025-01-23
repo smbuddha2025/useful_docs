@@ -1,0 +1,55 @@
+import * as cdk from 'aws-cdk-lib';
+import { Stack, StackProps } from 'aws-cdk-lib';
+import * as ec2 from 'aws-cdk-lib/aws-ec2';
+import * as rds from 'aws-cdk-lib/aws-rds';
+import * as secretsmanager from 'aws-cdk-lib/aws-secretsmanager';
+import { Construct } from 'constructs';
+
+export class AuroraServerlessStack extends Stack {
+  constructor(scope: Construct, id: string, props?: StackProps) {
+    super(scope, id, props);
+
+    // Fetch the existing VPC by its name or ID
+    const vpc = ec2.Vpc.fromLookup(this, 'ExistingVPC', {
+      vpcName: 'your-vpc-name', // Replace with your VPC name or use vpcId for ID
+    });
+
+    // Create a secret for the database credentials
+    const dbCredentialsSecret = new secretsmanager.Secret(this, 'DBCredentialsSecret', {
+      secretName: 'aurora-mysql-credentials',
+      generateSecretString: {
+        secretStringTemplate: JSON.stringify({ username: 'admin' }),
+        generateStringKey: 'password',
+        excludeCharacters: '/@"\'',
+      },
+    });
+
+    // Define the Aurora Serverless cluster
+    const auroraCluster = new rds.ServerlessCluster(this, 'AuroraMySQLServerless', {
+      engine: rds.DatabaseClusterEngine.AURORA_MYSQL,
+      vpc,
+      vpcSubnets: {
+        subnetType: ec2.SubnetType.PRIVATE_WITH_EGRESS, // Use appropriate subnet type
+      },
+      credentials: rds.Credentials.fromSecret(dbCredentialsSecret), // Use the secret created
+      defaultDatabaseName: 'mydatabase', // The initial database name
+      scaling: {
+        autoPause: cdk.Duration.minutes(5), // Pause after 5 minutes of inactivity
+        minCapacity: rds.AuroraCapacityUnit.ACU_2, // Minimum Aurora Capacity Unit
+        maxCapacity: rds.AuroraCapacityUnit.ACU_16, // Maximum Aurora Capacity Unit
+      },
+      removalPolicy: cdk.RemovalPolicy.DESTROY, // Clean up resources during stack deletion
+    });
+
+    // Outputs
+    new cdk.CfnOutput(this, 'DatabaseEndpoint', {
+      value: auroraCluster.clusterEndpoint.hostname,
+      description: 'The endpoint for the Aurora MySQL Serverless cluster',
+    });
+
+    new cdk.CfnOutput(this, 'SecretARN', {
+      value: dbCredentialsSecret.secretArn,
+      description: 'The ARN of the secret storing database credentials',
+    });
+  }
+}
